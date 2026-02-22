@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' blob:;">
+  <title>ScreenFace</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #1a1a1e;
+      color: #e4e4e7;
+      min-height: 100vh;
+    }
+    h1 { font-size: 1.25rem; margin: 0 0 16px; font-weight: 600; }
+    section { margin-bottom: 20px; }
+    label { display: block; margin-bottom: 6px; font-size: 0.875rem; color: #a1a1aa; }
+    select, button {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #3f3f46;
+      background: #27272a;
+      color: #e4e4e7;
+      font-size: 0.875rem;
+    }
+    select { cursor: pointer; }
+    button {
+      cursor: pointer;
+      font-weight: 500;
+      border: none;
+    }
+    button.primary { background: #3b82f6; color: #fff; }
+    button.primary:hover { background: #2563eb; }
+    button.danger { background: #dc2626; color: #fff; }
+    button.danger:hover { background: #b91c1c; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .preset-btn { width: auto; padding: 6px 12px; }
+    .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+    .row input[type="checkbox"] { margin: 0; accent-color: #3b82f6; }
+    .row span { font-size: 0.875rem; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    #livePreviewStage {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16/9;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #09090b;
+      margin-bottom: 12px;
+    }
+    #livePreviewCanvas {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+    #facecamOverlay {
+      position: absolute;
+      left: 16px;
+      top: 16px;
+      width: 120px;
+      height: 120px;
+      border: 2px dashed #22d3ee;
+      border-radius: 10px;
+      overflow: hidden;
+      cursor: grab;
+      z-index: 10;
+      background: rgba(15, 23, 42, 0.15);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+      display: none;
+    }
+    #facecamOverlay.circle {
+      border-radius: 999px;
+    }
+    #cameraTestPreview {
+      width: 120px;
+      height: 80px;
+      border-radius: 6px;
+      background: #09090b;
+      object-fit: cover;
+      display: none;
+    }
+    .tip { font-size: 0.75rem; color: #71717a; margin-top: 6px; }
+    .hotkeys { font-size: 0.75rem; color: #71717a; margin-top: 8px; }
+    .advanced-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #3f3f46;
+      background: #27272a;
+      color: #a1a1aa;
+      font-size: 0.875rem;
+      cursor: pointer;
+      margin-bottom: 0;
+    }
+    .advanced-toggle:hover { background: #3f3f46; color: #e4e4e7; }
+    .advanced-toggle .chevron {
+      transition: transform 0.2s ease;
+      color: #71717a;
+    }
+    .advanced-toggle.open .chevron { transform: rotate(180deg); }
+    #advancedPanel {
+      overflow: hidden;
+      border: 1px solid #3f3f46;
+      border-top: none;
+      border-radius: 0 0 8px 8px;
+      background: #1f1f23;
+    }
+    #advancedPanel:not(.open) { display: none; }
+    #advancedPanel.open { display: block; }
+    #advancedPanel .advanced-inner { padding: 12px 16px; }
+  </style>
+</head>
+<body>
+  <h1>ScreenFace</h1>
+
+  <section>
+    <label>Capture source</label>
+    <select id="sourceSelect">
+      <option value="">Select screen or window…</option>
+    </select>
+    <div class="tip">Choose a screen or window to record. Move preview to another monitor to keep it out of full-screen recording.</div>
+  </section>
+
+  <section>
+    <label>Resolution</label>
+    <select id="resolutionSelect">
+      <option value="1280x720">720p (1280×720)</option>
+      <option value="1920x1080" selected>1080p (1920×1080)</option>
+      <option value="2560x1440">1440p (2560×1440)</option>
+      <option value="3840x2160">4K (3840×2160)</option>
+    </select>
+  </section>
+
+  <section>
+    <div class="row"><input type="checkbox" id="followFocused" /><span>Follow focused window</span></div>
+    <div class="row"><input type="checkbox" id="autoZoomMouse" /><span>Auto zoom to mouse area</span></div>
+    <div class="row"><input type="checkbox" id="includeCamera" /><span>Include camera (facecam)</span></div>
+    <div class="row">
+      <button type="button" id="btnEditFacecam" class="preset-btn">Edit facecam</button>
+      <span class="tip" id="facecamEditorStatus" style="margin-left: 8px;">Editor off</span>
+    </div>
+    <div class="row">
+      <span style="font-size: 0.75rem;">Shape</span>
+      <select id="facecamShape" style="width:auto;">
+        <option value="rect" selected>Rectangle</option>
+        <option value="circle">Circle</option>
+      </select>
+      <span style="font-size: 0.75rem;">Size</span>
+      <input id="facecamSize" type="range" min="8" max="45" step="1" value="18" style="width:140px;">
+      <span id="facecamSizeValue" class="tip">18%</span>
+    </div>
+    <div class="row">
+      <span style="font-size: 0.75rem;">Zoom</span>
+      <input id="facecamZoom" type="range" min="1" max="3" step="0.1" value="1" style="width:140px;">
+      <span id="facecamZoomValue" class="tip">1.0x</span>
+    </div>
+    <div class="row">
+      <button type="button" id="btnTestCamera" class="preset-btn">Test camera</button>
+      <span id="cameraStatus" class="tip" style="margin-left: 8px;"></span>
+      <video id="cameraTestPreview" muted playsinline autoplay></video>
+    </div>
+  </section>
+
+  <section>
+    <label>Live preview</label>
+    <div id="livePreviewStage">
+      <canvas id="livePreviewCanvas" width="1280" height="720"></canvas>
+      <div id="facecamOverlay"></div>
+    </div>
+    <div class="tip">Shows composed output (desktop + facecam when enabled).</div>
+  </section>
+
+  <section class="grid">
+    <button id="btnPreview" type="button">Show preview window</button>
+    <button id="btnStart" class="primary" type="button">Start recording</button>
+  </section>
+  <section>
+    <button id="btnStop" class="danger" type="button" disabled>Stop recording</button>
+  </section>
+
+  <section>
+    <label>Presets</label>
+    <div class="row">
+      <span style="font-size: 0.75rem;">Preview position:</span>
+      <button type="button" class="preset-btn" data-preset-type="preview" data-index="0">1</button>
+      <button type="button" class="preset-btn" data-preset-type="preview" data-index="1">2</button>
+      <button type="button" class="preset-btn" data-preset-type="preview" data-index="2">3</button>
+    </div>
+    <div class="row">
+      <span style="font-size: 0.75rem;">Facecam position:</span>
+      <button type="button" class="preset-btn" data-preset-type="facecam" data-index="0">1</button>
+      <button type="button" class="preset-btn" data-preset-type="facecam" data-index="1">2</button>
+      <button type="button" class="preset-btn" data-preset-type="facecam" data-index="2">3</button>
+    </div>
+    <div class="tip">Click 1/2/3 to apply. Shift+click 1/2/3 to save current position.</div>
+  </section>
+
+  <section>
+    <button type="button" id="btnAdvancedToggle" class="advanced-toggle" aria-expanded="false">
+      <span>Advanced settings</span>
+      <span class="chevron" aria-hidden="true">▼</span>
+    </button>
+    <div id="advancedPanel" class="advanced-panel">
+      <div class="advanced-inner">
+        <section>
+          <label>Audio</label>
+          <div class="row">
+            <span style="font-size: 0.75rem;">Volume</span>
+            <input id="audioVolume" type="range" min="0" max="100" step="1" value="100" style="width:120px;">
+            <span id="audioVolumeValue" class="tip">100%</span>
+          </div>
+          <div class="row">
+            <span style="font-size: 0.75rem;">EQ profile</span>
+            <select id="audioEqProfile" style="width:auto;">
+              <option value="flat" selected>Flat</option>
+              <option value="voice">Voice</option>
+              <option value="music">Music</option>
+            </select>
+          </div>
+        </section>
+        <section>
+          <label>Video output</label>
+          <div class="row" style="flex-wrap:wrap;">
+            <span style="font-size: 0.75rem;">Default folder</span>
+            <span id="outputFolderPath" class="tip" style="flex:1; min-width:0; overflow: hidden; text-overflow: ellipsis;">Not set</span>
+            <button type="button" id="btnBrowseFolder" class="preset-btn">Browse…</button>
+          </div>
+          <div class="row">
+            <span style="font-size: 0.75rem;">Format</span>
+            <select id="outputFormat" style="width:auto;">
+              <option value="mp4" selected>MP4</option>
+              <option value="webm">WebM</option>
+            </select>
+          </div>
+          <div class="row">
+            <span style="font-size: 0.75rem;">Quality</span>
+            <select id="outputQuality" style="width:auto;">
+              <option value="quality" selected>Optimize for quality</option>
+              <option value="balanced">Balanced</option>
+              <option value="size">Smaller file</option>
+            </select>
+          </div>
+          <div class="tip">Save dialog opens with the default folder. MP4 is converted from WebM after recording.</div>
+        </section>
+        <section>
+          <label>Setting profiles</label>
+          <div class="row">
+            <button type="button" id="btnSaveProfile" class="preset-btn">Save current settings as profile</button>
+          </div>
+          <div class="row">
+            <span style="font-size: 0.75rem;">Load profile</span>
+            <select id="profileSelect" style="width:auto;">
+              <option value="">—</option>
+            </select>
+          </div>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <label>Hotkeys</label>
+    <div class="hotkeys">
+      Preview position: Ctrl+Shift+1 / 2 / 3 — Facecam position: Ctrl+Alt+1 / 2 / 3
+    </div>
+  </section>
+
+  <script src="compositor.js"></script>
+  <script src="control.js"></script>
+</body>
+</html>

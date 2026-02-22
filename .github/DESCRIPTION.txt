@@ -1,0 +1,1 @@
+Screen recording app with smart window switching, optional facecam, and MP4/WebM export. Install wizard + one-liner install for Mac & Windows.

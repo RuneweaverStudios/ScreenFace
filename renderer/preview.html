@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; media-src 'self' blob:; img-src 'self' data: blob:;">
+  <title>Preview</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 0;
+      background: #09090b;
+      font-family: system-ui, sans-serif;
+      color: #a1a1aa;
+      overflow: hidden;
+    }
+    .drag-handle {
+      height: 24px;
+      background: #18181b;
+      -webkit-app-region: drag;
+      display: flex;
+      align-items: center;
+      padding: 0 8px;
+      font-size: 11px;
+    }
+    #previewCanvas {
+      display: block;
+      width: 100%;
+      height: calc(100vh - 24px);
+      background: #000;
+    }
+    .placeholder {
+      position: absolute;
+      top: 24px;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+  <div class="drag-handle">Preview — drag to move</div>
+  <canvas id="previewCanvas" width="1280" height="720"></canvas>
+  <div class="placeholder" id="placeholder">Preview active</div>
+  <script src="preview.js"></script>
+</body>
+</html>
