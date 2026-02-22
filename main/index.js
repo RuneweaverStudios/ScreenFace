@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, desktopCapturer, session, Tray, globalShortcut } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, desktopCapturer, session, Tray, Menu, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs').promises;
 const os = require('os');
@@ -55,10 +55,24 @@ function createPreviewWindow() {
   previewWindow.on('closed', () => { previewWindow = null; });
 }
 
+function getTrayMenu() {
+  const isRecording = !!trayPulseInterval;
+  return Menu.buildFromTemplate([
+    { label: 'Settings', click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.show(); } },
+    { type: 'separator' },
+    { label: 'Record screen only', click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('tray-start-recording', { mode: 'screen' }); }, enabled: !isRecording },
+    { label: 'Record webcam only', click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('tray-start-recording', { mode: 'webcam' }); }, enabled: !isRecording },
+    { label: 'Record audio only', click: () => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('tray-start-recording', { mode: 'audio' }); }, enabled: !isRecording },
+    { type: 'separator' },
+    { label: 'Quit', click: () => app.quit() },
+  ]);
+}
+
 async function setupTray() {
   const icon = await getIdleIconAsync();
   tray = new Tray(icon);
   tray.setToolTip('ScreenFace – Screen Recorder');
+  tray.setContextMenu(getTrayMenu());
   tray.on('click', () => {
     if (mainWindow) {
       mainWindow.isVisible() ? mainWindow.hide() : mainWindow.show();
@@ -168,9 +182,15 @@ ipcMain.handle('get-focused-window', async () => {
 ipcMain.handle('focus-polling-start', () => { startFocusPolling(); });
 ipcMain.handle('focus-polling-stop', () => { stopFocusPolling(); });
 
-// IPC: recording state for tray
-ipcMain.on('recording-started', () => { startTrayPulse(); });
-ipcMain.on('recording-stopped', () => { stopTrayPulse(); });
+// IPC: recording state for tray (refresh menu so Record items disable/enable)
+ipcMain.on('recording-started', () => {
+  startTrayPulse();
+  if (tray && !tray.isDestroyed()) tray.setContextMenu(getTrayMenu());
+});
+ipcMain.on('recording-stopped', () => {
+  stopTrayPulse();
+  if (tray && !tray.isDestroyed()) tray.setContextMenu(getTrayMenu());
+});
 
 // IPC: preview window
 ipcMain.handle('preview-show', () => { createPreviewWindow(); });

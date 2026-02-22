@@ -29,6 +29,7 @@ class Compositor {
     this.onRecordingStopped = opts.onRecordingStopped || (() => {});
     this.onCameraError = opts.onCameraError || (() => {});
     this.videoBitsPerSecond = opts.videoBitsPerSecond != null ? opts.videoBitsPerSecond : 8000000;
+    this.recordingMode = opts.recordingMode || 'screen'; // 'screen' | 'webcam'
 
     this.canvas = null;
     this.desktopStream = null;
@@ -102,6 +103,10 @@ class Compositor {
 
   setVideoBitsPerSecond(bps) {
     this.videoBitsPerSecond = bps;
+  }
+
+  setRecordingMode(mode) {
+    this.recordingMode = mode === 'webcam' ? 'webcam' : 'screen';
   }
 
   isRecordingActive() {
@@ -311,6 +316,37 @@ class Compositor {
     if (!this.canvas || !this.ctx) return;
     const w = this.canvas.width;
     const h = this.canvas.height;
+    const isWebcamOnly = this.recordingMode === 'webcam';
+
+    if (isWebcamOnly && this.cameraStream) {
+      const cam = this._cameraVideoEl || (this._cameraVideoEl = this._makeVideoEl(this.cameraStream));
+      this.ctx.fillStyle = '#000';
+      this.ctx.fillRect(0, 0, w, h);
+      if (cam.readyState >= 2 && cam.videoWidth > 0 && cam.videoHeight > 0) {
+        const scale = Math.max(w / cam.videoWidth, h / cam.videoHeight);
+        const sw = cam.videoWidth * scale;
+        const sh = cam.videoHeight * scale;
+        const sx = (w - sw) / 2;
+        const sy = (h - sh) / 2;
+        this.ctx.drawImage(cam, 0, 0, cam.videoWidth, cam.videoHeight, sx, sy, sw, sh);
+      }
+      if (this.livePreviewCanvas && this.livePreviewCtx) {
+        this.livePreviewCtx.clearRect(0, 0, this.livePreviewCanvas.width, this.livePreviewCanvas.height);
+        this.livePreviewCtx.drawImage(this.canvas, 0, 0, this.canvas.width, this.canvas.height, 0, 0, this.livePreviewCanvas.width, this.livePreviewCanvas.height);
+      }
+      if (this.previewOpen && window.screenface && window.screenface.previewFrame) {
+        const now = Date.now();
+        if (now - this.lastPreviewPushMs > 120) {
+          this.lastPreviewPushMs = now;
+          try {
+            this.livePreviewCtx ? window.screenface.previewFrame(this.canvas.toDataURL('image/jpeg', 0.65)) : null;
+          } catch (_) {}
+        }
+      }
+      this.rafId = requestAnimationFrame(() => this._drawFrame());
+      return;
+    }
+
     const vid = this.desktopStream && this.desktopStream.getVideoTracks()[0];
     const video = vid ? (this._desktopVideoEl || (this._desktopVideoEl = this._makeVideoEl(this.desktopStream))) : null;
 
@@ -480,23 +516,31 @@ class Compositor {
     this.canvas.style.cssText = 'position:absolute;left:-9999px;width:1px;height:1px;opacity:0;pointer-events:none;';
     document.body.appendChild(this.canvas);
 
-    this.desktopStream = await this._getDesktopStream();
-    if (!this.desktopStream) {
-      throw new Error('Could not get desktop stream. Select a source and try again.');
+    const isWebcamOnly = this.recordingMode === 'webcam';
+    if (!isWebcamOnly) {
+      this.desktopStream = await this._getDesktopStream();
+      if (!this.desktopStream) {
+        throw new Error('Could not get desktop stream. Select a source and try again.');
+      }
+    } else {
+      this.desktopStream = null;
     }
 
-    if (this.includeCamera) {
+    if (this.includeCamera || isWebcamOnly) {
       await this._getCameraStream();
     }
+    if (isWebcamOnly && !this.cameraStream) {
+      throw new Error('Could not get camera. Grant camera permission and try again.');
+    }
 
-    if (this.followFocused && window.screenface) {
+    if (!isWebcamOnly && this.followFocused && window.screenface) {
       window.screenface.focusPollingStart();
     }
 
-    this._desktopVideoEl = this._makeVideoEl(this.desktopStream);
+    if (this.desktopStream) this._desktopVideoEl = this._makeVideoEl(this.desktopStream);
     if (this.cameraStream) this._cameraVideoEl = this._makeVideoEl(this.cameraStream);
 
-    this._setupMouseTracking();
+    if (!isWebcamOnly) this._setupMouseTracking();
     this._drawFrame();
 
     if (this.previewOpen && window.screenface && window.screenface.previewStartCapture) {

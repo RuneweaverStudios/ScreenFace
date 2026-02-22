@@ -37,6 +37,9 @@ let facecamEditorEnabled = false;
 let draggingFacecam = false;
 let draggingFacecamOverlay = false;
 let overlayDragOffset = { x: 0, y: 0 };
+let audioOnlyRecorder = null;
+let audioOnlyChunks = [];
+let audioOnlyStream = null;
 
 function pushPreviewSettings() {
   if (!previewVisible || !window.screenface || !window.screenface.previewUpdateSettings) return;
@@ -74,17 +77,18 @@ function getQualityBitrate() {
   return QUALITY_BITRATE[outputQuality?.value || 'quality'] || 8000000;
 }
 
-function buildCompositorOptions() {
+function buildCompositorOptions(overrides = {}) {
   const res = getResolution();
   return {
-    sourceId: sourceSelect.value,
+    sourceId: overrides.sourceId !== undefined ? overrides.sourceId : sourceSelect.value,
     width: res.width,
     height: res.height,
-    followFocused: followFocused.checked,
-    autoZoomMouse: autoZoomMouse.checked,
-    includeCamera: includeCamera.checked,
+    followFocused: overrides.followFocused !== undefined ? overrides.followFocused : followFocused.checked,
+    autoZoomMouse: overrides.autoZoomMouse !== undefined ? overrides.autoZoomMouse : autoZoomMouse.checked,
+    includeCamera: overrides.includeCamera !== undefined ? overrides.includeCamera : includeCamera.checked,
     previewOpen: previewVisible,
     videoBitsPerSecond: getQualityBitrate(),
+    recordingMode: overrides.recordingMode || 'screen',
     onRecordingStarted: () => {
       window.screenface.recordingStarted();
       btnStart.disabled = true;
@@ -362,12 +366,108 @@ btnStart.addEventListener('click', async () => {
 });
 
 btnStop.addEventListener('click', async () => {
+  if (audioOnlyRecorder && audioOnlyRecorder.state !== 'inactive') {
+    audioOnlyRecorder.stop();
+    return;
+  }
   if (compositor) {
     await compositor.stopRecording();
   }
   if (!includeCamera.checked) {
     await stopFacecamOverlay();
   }
+});
+
+async function startTrayRecordingScreen() {
+  if (compositor && compositor.isRecordingActive()) return;
+  if (audioOnlyRecorder && audioOnlyRecorder.state === 'recording') return;
+  await loadSources();
+  if (!sourceSelect.value) {
+    const sources = await window.screenface.getSources({ types: ['screen'], thumbnailSize: 0 });
+    const first = sources.find((s) => s.id);
+    if (first) sourceSelect.value = first.id;
+  }
+  if (!sourceSelect.value) {
+    alert('No screen source available. Click the tray icon and choose Settings, then select a capture source.');
+    return;
+  }
+  includeCamera.checked = false;
+  if (compositor) {
+    await compositor.stopPreview();
+    compositor = null;
+  }
+  compositor = new Compositor(buildCompositorOptions({ includeCamera: false, recordingMode: 'screen' }));
+  compositor.setLivePreviewCanvas(livePreviewCanvas);
+  compositor.applyFacecamPreset(activeFacecamPresetIndex);
+  applyFacecamControlsToCompositor();
+  try {
+    await compositor.startRecording();
+  } catch (e) {
+    compositor = null;
+    alert('Screen recording failed: ' + (e.message || e.name || 'Select a source in Settings.'));
+    return;
+  }
+  pushPreviewSettings();
+}
+
+async function startTrayRecordingWebcam() {
+  if (compositor && compositor.isRecordingActive()) return;
+  if (audioOnlyRecorder && audioOnlyRecorder.state === 'recording') return;
+  if (compositor) {
+    await compositor.stopPreview();
+    compositor = null;
+  }
+  const opts = buildCompositorOptions({ recordingMode: 'webcam', includeCamera: true, sourceId: '', followFocused: false, autoZoomMouse: false });
+  compositor = new Compositor(opts);
+  compositor.setLivePreviewCanvas(livePreviewCanvas);
+  try {
+    await compositor.startRecording();
+  } catch (e) {
+    compositor = null;
+    alert('Webcam recording failed: ' + (e.message || e.name || 'Check camera permission.'));
+    return;
+  }
+  pushPreviewSettings();
+}
+
+async function startTrayRecordingAudio() {
+  if (compositor && compositor.isRecordingActive()) return;
+  if (audioOnlyRecorder && audioOnlyRecorder.state === 'recording') return;
+  try {
+    audioOnlyStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  } catch (e) {
+    alert('Microphone access failed: ' + (e.message || e.name || 'Grant microphone permission.'));
+    return;
+  }
+  audioOnlyChunks = [];
+  const mime = MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg';
+  audioOnlyRecorder = new MediaRecorder(audioOnlyStream, { mimeType: mime, audioBitsPerSecond: 128000 });
+  audioOnlyRecorder.ondataavailable = (e) => { if (e.data.size) audioOnlyChunks.push(e.data); };
+  audioOnlyRecorder.onstop = async () => {
+    const stream = audioOnlyStream;
+    audioOnlyStream = null;
+    audioOnlyRecorder = null;
+    if (stream) stream.getTracks().forEach((t) => t.stop());
+    window.screenface.recordingStopped();
+    btnStart.disabled = false;
+    btnStop.disabled = true;
+    const chunks = audioOnlyChunks;
+    audioOnlyChunks = [];
+    const arr = await Promise.all(chunks.map((c) => c.arrayBuffer().then((ab) => Array.from(new Uint8Array(ab)))));
+    const filePath = await window.screenface.showSaveDialog();
+    if (filePath) window.screenface.writeRecordingChunks(filePath, arr);
+  };
+  audioOnlyRecorder.start(1000);
+  window.screenface.recordingStarted();
+  btnStart.disabled = true;
+  btnStop.disabled = false;
+}
+
+window.screenface.onTrayStartRecording((payload) => {
+  const mode = payload && payload.mode;
+  if (mode === 'screen') startTrayRecordingScreen();
+  else if (mode === 'webcam') startTrayRecordingWebcam();
+  else if (mode === 'audio') startTrayRecordingAudio();
 });
 
 window.screenface.onFocusWindowChanged(({ sourceId }) => {

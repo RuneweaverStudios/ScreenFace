@@ -38,4 +38,7 @@ contextBridge.exposeInMainWorld('screenface', {
   onApplyFacecamPreset: (cb) => {
     ipcRenderer.on('apply-facecam-preset', (_, index) => cb(index));
   },
+  onTrayStartRecording: (cb) => {
+    ipcRenderer.on('tray-start-recording', (_, payload) => cb(payload));
+  },
 });
