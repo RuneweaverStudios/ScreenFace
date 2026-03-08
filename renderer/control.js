@@ -6,6 +6,7 @@ const resolutionSelect = document.getElementById('resolutionSelect');
 const followFocused = document.getElementById('followFocused');
 const autoZoomMouse = document.getElementById('autoZoomMouse');
 const includeCamera = document.getElementById('includeCamera');
+const livePreviewEnabled = document.getElementById('livePreviewEnabled');
 const btnPreview = document.getElementById('btnPreview');
 const btnStart = document.getElementById('btnStart');
 const btnStop = document.getElementById('btnStop');
@@ -27,6 +28,8 @@ const btnSaveProfile = document.getElementById('btnSaveProfile');
 const profileSelect = document.getElementById('profileSelect');
 const btnAdvancedToggle = document.getElementById('btnAdvancedToggle');
 const advancedPanel = document.getElementById('advancedPanel');
+const btnCameraToggle = document.getElementById('btnCameraToggle');
+const btnMicToggle = document.getElementById('btnMicToggle');
 
 const QUALITY_BITRATE = { quality: 8000000, balanced: 5000000, size: 2000000 };
 
@@ -40,6 +43,7 @@ let overlayDragOffset = { x: 0, y: 0 };
 let audioOnlyRecorder = null;
 let audioOnlyChunks = [];
 let audioOnlyStream = null;
+let includeMicrophone = false;
 
 function pushPreviewSettings() {
   if (!previewVisible || !window.screenface || !window.screenface.previewUpdateSettings) return;
@@ -107,8 +111,6 @@ function buildCompositorOptions(overrides = {}) {
 }
 
 async function ensurePreviewCompositor() {
-  const sourceId = sourceSelect.value;
-  if (!sourceId) return;
   if (!compositor) {
     compositor = new Compositor(buildCompositorOptions());
     compositor.setLivePreviewCanvas(livePreviewCanvas);
@@ -119,15 +121,43 @@ async function ensurePreviewCompositor() {
   await compositor.startPreview();
 }
 
+function shouldRunLivePreview() {
+  return livePreviewEnabled && livePreviewEnabled.checked && sourceSelect.value;
+}
+
+async function maybeStopPreviewCompositor() {
+  if (!compositor || compositor.isRecordingActive() || previewVisible) return;
+  if (shouldRunLivePreview()) return;
+  await compositor.stopPreview();
+  compositor = null;
+  stopFacecamOverlay();
+}
+
+if (btnCameraToggle) {
+  btnCameraToggle.addEventListener('click', () => {
+    includeCamera.checked = !includeCamera.checked;
+    includeCamera.dispatchEvent(new Event('change'));
+  });
+}
+if (btnMicToggle) {
+  btnMicToggle.addEventListener('click', () => {
+    includeMicrophone = !includeMicrophone;
+    updateCameraMicButtonStates();
+  });
+}
+
 sourceSelect.addEventListener('change', async () => {
   const id = sourceSelect.value;
   if (!id) {
     if (compositor) compositor.setDesktopSourceId(null);
+    await maybeStopPreviewCompositor();
     pushPreviewSettings();
     return;
   }
   if (compositor) compositor.setDesktopSourceId(id);
-  if (previewVisible) await ensurePreviewCompositor();
+  if (previewVisible || shouldRunLivePreview()) {
+    await ensurePreviewCompositor();
+  }
   pushPreviewSettings();
 });
 
@@ -154,18 +184,27 @@ autoZoomMouse.addEventListener('change', () => {
   pushPreviewSettings();
 });
 
-includeCamera.addEventListener('change', () => {
-  if (compositor) compositor.setIncludeCamera(includeCamera.checked);
+function updateCameraMicButtonStates() {
+  if (btnCameraToggle) {
+    btnCameraToggle.classList.toggle('on', includeCamera.checked);
+    btnCameraToggle.setAttribute('aria-pressed', includeCamera.checked);
+  }
+  if (btnMicToggle) {
+    btnMicToggle.classList.toggle('on', includeMicrophone);
+    btnMicToggle.setAttribute('aria-pressed', includeMicrophone);
+  }
+}
+
+includeCamera.addEventListener('change', async () => {
+  if (compositor) await compositor.setIncludeCamera(includeCamera.checked);
   if (includeCamera.checked) {
-    if (sourceSelect.value) {
-      ensurePreviewCompositor().then(() => startFacecamOverlay());
-    } else {
-      startFacecamOverlay();
-    }
+    await ensurePreviewCompositor();
+    startFacecamOverlay();
   } else {
     stopFacecamOverlay();
   }
   pushPreviewSettings();
+  updateCameraMicButtonStates();
 });
 
 function updateFacecamUiLabels() {
@@ -312,6 +351,15 @@ btnTestCamera.addEventListener('click', async () => {
   }
 });
 
+livePreviewEnabled.addEventListener('change', async () => {
+  if (shouldRunLivePreview()) {
+    if (sourceSelect.value) await ensurePreviewCompositor();
+    if (includeCamera.checked && compositor) await startFacecamOverlay();
+  } else {
+    await maybeStopPreviewCompositor();
+  }
+});
+
 btnPreview.addEventListener('click', async () => {
   if (!previewVisible) {
     await window.screenface.previewShow();
@@ -330,11 +378,11 @@ btnPreview.addEventListener('click', async () => {
     previewVisible = false;
     btnPreview.textContent = 'Show preview window';
     if (compositor) compositor.setPreviewWindowOpen(false);
-    if (compositor && !compositor.isRecordingActive()) {
+    if (!shouldRunLivePreview() && compositor && !compositor.isRecordingActive()) {
       await compositor.stopPreview();
       compositor = null;
+      await stopFacecamOverlay();
     }
-    await stopFacecamOverlay();
   }
 });
 
@@ -655,6 +703,7 @@ btnSaveProfile.addEventListener('click', async () => {
     followFocused: followFocused.checked,
     autoZoomMouse: autoZoomMouse.checked,
     includeCamera: includeCamera.checked,
+    includeMicrophone,
     facecamShape: facecamShape.value,
     facecamSize: Number(facecamSize.value),
     facecamZoom: Number(facecamZoom.value),
@@ -684,6 +733,7 @@ profileSelect.addEventListener('change', async () => {
   if (payload.followFocused != null) followFocused.checked = payload.followFocused;
   if (payload.autoZoomMouse != null) autoZoomMouse.checked = payload.autoZoomMouse;
   if (payload.includeCamera != null) includeCamera.checked = payload.includeCamera;
+  if (payload.includeMicrophone != null) includeMicrophone = payload.includeMicrophone;
   if (payload.facecamShape != null) facecamShape.value = payload.facecamShape;
   if (payload.facecamSize != null) {
     facecamSize.value = payload.facecamSize;
@@ -725,11 +775,13 @@ profileSelect.addEventListener('change', async () => {
     if (compositor) compositor.setDesktopSourceId(sourceSelect.value);
     pushPreviewSettings();
   }
+  updateCameraMicButtonStates();
 });
 
 updateFacecamUiLabels();
 applyFacecamOverlayShape();
 applyFacecamOverlayZoom();
+updateCameraMicButtonStates();
 function setAdvancedPanelOpen(open) {
   const isOpen = !!open;
   if (advancedPanel) {
@@ -756,6 +808,10 @@ if (btnAdvancedToggle && advancedPanel) {
   }
 }
 
-loadSources();
+loadSources().then(() => {
+  if (shouldRunLivePreview()) ensurePreviewCompositor().then(() => {
+    if (includeCamera.checked && compositor) startFacecamOverlay();
+  });
+});
 loadSettingsAndApply();
 refreshProfileList();

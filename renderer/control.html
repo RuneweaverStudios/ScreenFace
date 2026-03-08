@@ -10,13 +10,20 @@
     body {
       font-family: system-ui, -apple-system, sans-serif;
       margin: 0;
-      padding: 16px;
+      padding: 12px 16px;
       background: #1a1a1e;
       color: #e4e4e7;
-      min-height: 100vh;
+      overflow-y: auto;
     }
-    h1 { font-size: 1.25rem; margin: 0 0 16px; font-weight: 600; }
-    section { margin-bottom: 20px; }
+    h1 { font-size: 1.25rem; margin: 0 0 12px; font-weight: 600; }
+    section { margin-bottom: 14px; }
+    .main-cols {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+    .main-cols .col-left, .main-cols .col-right { min-width: 0; }
     label { display: block; margin-bottom: 6px; font-size: 0.875rem; color: #a1a1aa; }
     select, button {
       width: 100%;
@@ -43,6 +50,24 @@
     .row input[type="checkbox"] { margin: 0; accent-color: #3b82f6; }
     .row span { font-size: 0.875rem; }
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .icon-toggles { display: flex; gap: 8px; margin-top: 10px; margin-bottom: 0; }
+    .icon-toggle {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      border-radius: 8px;
+      border: 1px solid #3f3f46;
+      background: #27272a;
+      color: #71717a;
+      font-size: 0.8125rem;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .icon-toggle:hover { background: #3f3f46; color: #a1a1aa; }
+    .icon-toggle.on { background: #1e3a5f; border-color: #3b82f6; color: #93c5fd; }
+    .icon-toggle.on:hover { background: #2563eb; color: #fff; }
+    .icon-toggle svg { flex-shrink: 0; }
     #livePreviewStage {
       position: relative;
       width: 100%;
@@ -85,7 +110,7 @@
       display: none;
     }
     .tip { font-size: 0.75rem; color: #71717a; margin-top: 6px; }
-    .hotkeys { font-size: 0.75rem; color: #71717a; margin-top: 8px; }
+    .hotkeys { font-size: 0.75rem; color: #71717a; margin-top: 4px; }
     .advanced-toggle {
       display: flex;
       align-items: center;
@@ -115,68 +140,85 @@
     }
     #advancedPanel:not(.open) { display: none; }
     #advancedPanel.open { display: block; }
-    #advancedPanel .advanced-inner { padding: 12px 16px; }
+    #advancedPanel .advanced-inner { padding: 10px 14px; }
   </style>
 </head>
 <body>
   <h1>ScreenFace</h1>
 
-  <section>
-    <label>Capture source</label>
-    <select id="sourceSelect">
-      <option value="">Select screen or window…</option>
-    </select>
-    <div class="tip">Choose a screen or window to record. Move preview to another monitor to keep it out of full-screen recording.</div>
-  </section>
-
-  <section>
-    <label>Resolution</label>
-    <select id="resolutionSelect">
-      <option value="1280x720">720p (1280×720)</option>
-      <option value="1920x1080" selected>1080p (1920×1080)</option>
-      <option value="2560x1440">1440p (2560×1440)</option>
-      <option value="3840x2160">4K (3840×2160)</option>
-    </select>
-  </section>
-
-  <section>
-    <div class="row"><input type="checkbox" id="followFocused" /><span>Follow focused window</span></div>
-    <div class="row"><input type="checkbox" id="autoZoomMouse" /><span>Auto zoom to mouse area</span></div>
-    <div class="row"><input type="checkbox" id="includeCamera" /><span>Include camera (facecam)</span></div>
-    <div class="row">
-      <button type="button" id="btnEditFacecam" class="preset-btn">Edit facecam</button>
-      <span class="tip" id="facecamEditorStatus" style="margin-left: 8px;">Editor off</span>
+  <div class="main-cols">
+    <div class="col-left">
+      <section>
+        <label>Resolution</label>
+        <select id="resolutionSelect">
+          <option value="1280x720">720p (1280×720)</option>
+          <option value="1920x1080" selected>1080p (1920×1080)</option>
+          <option value="2560x1440">1440p (2560×1440)</option>
+          <option value="3840x2160">4K (3840×2160)</option>
+        </select>
+      </section>
+      <section>
+        <label>Live preview</label>
+        <div class="row">
+          <input type="checkbox" id="livePreviewEnabled" checked />
+          <span>Always on</span>
+        </div>
+        <div id="livePreviewStage">
+          <canvas id="livePreviewCanvas" width="1280" height="720"></canvas>
+          <div id="facecamOverlay"></div>
+        </div>
+        <div class="tip">Shows composed output (desktop + facecam when enabled).</div>
+      </section>
+      <section>
+        <label>Capture source</label>
+        <select id="sourceSelect">
+          <option value="">Select screen or window…</option>
+        </select>
+        <div class="row icon-toggles">
+          <button type="button" id="btnCameraToggle" class="icon-toggle" title="Camera (facecam)" aria-pressed="false">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+            <span>Camera</span>
+          </button>
+          <button type="button" id="btnMicToggle" class="icon-toggle" title="Microphone" aria-pressed="false">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
+            <span>Mic</span>
+          </button>
+        </div>
+        <div class="tip">Choose a screen or window to record.</div>
+      </section>
     </div>
-    <div class="row">
-      <span style="font-size: 0.75rem;">Shape</span>
-      <select id="facecamShape" style="width:auto;">
-        <option value="rect" selected>Rectangle</option>
-        <option value="circle">Circle</option>
-      </select>
-      <span style="font-size: 0.75rem;">Size</span>
-      <input id="facecamSize" type="range" min="8" max="45" step="1" value="18" style="width:140px;">
-      <span id="facecamSizeValue" class="tip">18%</span>
+    <div class="col-right">
+      <section>
+        <div class="row"><input type="checkbox" id="followFocused" /><span>Follow focused window</span></div>
+        <div class="row"><input type="checkbox" id="autoZoomMouse" /><span>Auto zoom to mouse area</span></div>
+        <div class="row"><input type="checkbox" id="includeCamera" /><span>Include camera (facecam)</span></div>
+        <div class="row">
+          <button type="button" id="btnEditFacecam" class="preset-btn">Edit facecam</button>
+          <span class="tip" id="facecamEditorStatus" style="margin-left: 8px;">Editor off</span>
+        </div>
+        <div class="row">
+          <span style="font-size: 0.75rem;">Shape</span>
+          <select id="facecamShape" style="width:auto;">
+            <option value="rect" selected>Rectangle</option>
+            <option value="circle">Circle</option>
+          </select>
+          <span style="font-size: 0.75rem;">Size</span>
+          <input id="facecamSize" type="range" min="8" max="45" step="1" value="18" style="width:100px;">
+          <span id="facecamSizeValue" class="tip">18%</span>
+        </div>
+        <div class="row">
+          <span style="font-size: 0.75rem;">Zoom</span>
+          <input id="facecamZoom" type="range" min="1" max="3" step="0.1" value="1" style="width:100px;">
+          <span id="facecamZoomValue" class="tip">1.0x</span>
+        </div>
+        <div class="row">
+          <button type="button" id="btnTestCamera" class="preset-btn">Test camera</button>
+          <span id="cameraStatus" class="tip" style="margin-left: 8px;"></span>
+          <video id="cameraTestPreview" muted playsinline autoplay></video>
+        </div>
+      </section>
     </div>
-    <div class="row">
-      <span style="font-size: 0.75rem;">Zoom</span>
-      <input id="facecamZoom" type="range" min="1" max="3" step="0.1" value="1" style="width:140px;">
-      <span id="facecamZoomValue" class="tip">1.0x</span>
-    </div>
-    <div class="row">
-      <button type="button" id="btnTestCamera" class="preset-btn">Test camera</button>
-      <span id="cameraStatus" class="tip" style="margin-left: 8px;"></span>
-      <video id="cameraTestPreview" muted playsinline autoplay></video>
-    </div>
-  </section>
-
-  <section>
-    <label>Live preview</label>
-    <div id="livePreviewStage">
-      <canvas id="livePreviewCanvas" width="1280" height="720"></canvas>
-      <div id="facecamOverlay"></div>
-    </div>
-    <div class="tip">Shows composed output (desktop + facecam when enabled).</div>
-  </section>
+  </div>
 
   <section class="grid">
     <button id="btnPreview" type="button">Show preview window</button>

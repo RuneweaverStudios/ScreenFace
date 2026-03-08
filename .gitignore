@@ -31,5 +31,8 @@ npm-debug.log*
 .env
 .env.local
 
+# API keys (do not commit)
+openrouter-config.json
+
 # Electron
 *.asar

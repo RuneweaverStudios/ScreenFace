@@ -39,6 +39,7 @@ class Compositor {
     this.livePreviewCanvas = null;
     this.livePreviewCtx = null;
     this.rafId = null;
+    this.previewPushIntervalId = null;
     this.isInitialized = false;
     this.isRecording = false;
     this.lastPreviewPushMs = 0;
@@ -87,18 +88,29 @@ class Compositor {
     this.autoZoomMouse = !!enabled;
   }
 
-  setIncludeCamera(enabled) {
+  async setIncludeCamera(enabled) {
     this.includeCamera = !!enabled;
     if (enabled && !this.cameraStream) {
-      this._getCameraStream();
+      await this._getCameraStream();
+      if (this.isInitialized && this.cameraStream && !this._cameraVideoEl) {
+        this._cameraVideoEl = this._makeVideoEl(this.cameraStream);
+      }
     } else if (!enabled && this.cameraStream) {
       this.cameraStream.getTracks().forEach(t => t.stop());
       this.cameraStream = null;
+      if (this._cameraVideoEl && this._cameraVideoEl.parentNode) {
+        this._cameraVideoEl.parentNode.removeChild(this._cameraVideoEl);
+      }
+      this._cameraVideoEl = null;
     }
   }
 
   setPreviewWindowOpen(open) {
     this.previewOpen = !!open;
+    if (this.isInitialized && this.canvas) {
+      if (this.previewOpen) this._startPreviewPushInterval();
+      else this._stopPreviewPushInterval();
+    }
   }
 
   setVideoBitsPerSecond(bps) {
@@ -281,11 +293,32 @@ class Compositor {
   }
 
   async _replaceDesktopStream() {
-    if (!this.desktopStream) return;
+    if (!this.sourceId) {
+      if (this.desktopStream) {
+        this.desktopStream.getTracks().forEach(t => t.stop());
+        this.desktopStream = null;
+        if (this._desktopVideoEl && this._desktopVideoEl.parentNode) {
+          this._desktopVideoEl.parentNode.removeChild(this._desktopVideoEl);
+        }
+        this._desktopVideoEl = null;
+      }
+      return;
+    }
+    if (!this.desktopStream) {
+      this.desktopStream = await this._getDesktopStream();
+      if (this.desktopStream) {
+        this._desktopVideoEl = this._makeVideoEl(this.desktopStream);
+      }
+      return;
+    }
     const old = this.desktopStream;
     this.desktopStream = await this._getDesktopStream();
     if (this.desktopStream) {
       old.getTracks().forEach(t => t.stop());
+      if (this._desktopVideoEl && this._desktopVideoEl.parentNode) {
+        this._desktopVideoEl.parentNode.removeChild(this._desktopVideoEl);
+      }
+      this._desktopVideoEl = this._makeVideoEl(this.desktopStream);
     } else {
       this.desktopStream = old;
     }
@@ -333,15 +366,6 @@ class Compositor {
       if (this.livePreviewCanvas && this.livePreviewCtx) {
         this.livePreviewCtx.clearRect(0, 0, this.livePreviewCanvas.width, this.livePreviewCanvas.height);
         this.livePreviewCtx.drawImage(this.canvas, 0, 0, this.canvas.width, this.canvas.height, 0, 0, this.livePreviewCanvas.width, this.livePreviewCanvas.height);
-      }
-      if (this.previewOpen && window.screenface && window.screenface.previewFrame) {
-        const now = Date.now();
-        if (now - this.lastPreviewPushMs > 120) {
-          this.lastPreviewPushMs = now;
-          try {
-            this.livePreviewCtx ? window.screenface.previewFrame(this.canvas.toDataURL('image/jpeg', 0.65)) : null;
-          } catch (_) {}
-        }
       }
       this.rafId = requestAnimationFrame(() => this._drawFrame());
       return;
@@ -436,20 +460,24 @@ class Compositor {
       this.livePreviewCtx.drawImage(this.canvas, 0, 0, this.canvas.width, this.canvas.height, 0, 0, targetW, targetH);
     }
 
-    if (this.previewOpen && window.screenface && window.screenface.previewFrame) {
-      const now = Date.now();
-      if (now - this.lastPreviewPushMs > 120) {
-        this.lastPreviewPushMs = now;
-        try {
-          const frame = this.canvas.toDataURL('image/jpeg', 0.65);
-          window.screenface.previewFrame(frame);
-        } catch (_) {
-          // ignore occasional frame encoding errors
-        }
-      }
-    }
-
     this.rafId = requestAnimationFrame(() => this._drawFrame());
+  }
+
+  _startPreviewPushInterval() {
+    this._stopPreviewPushInterval();
+    this.previewPushIntervalId = setInterval(() => {
+      if (!this.canvas || !this.previewOpen || !window.screenface || !window.screenface.previewFrame) return;
+      try {
+        window.screenface.previewFrame(this.canvas.toDataURL('image/jpeg', 0.6));
+      } catch (_) {}
+    }, 100);
+  }
+
+  _stopPreviewPushInterval() {
+    if (this.previewPushIntervalId) {
+      clearInterval(this.previewPushIntervalId);
+      this.previewPushIntervalId = null;
+    }
   }
 
   _drawFacecamGuides(ctx, w, h) {
@@ -501,9 +529,11 @@ class Compositor {
     v.playsInline = true;
     v.autoplay = true;
     v.setAttribute('playsinline', '');
+    // Offscreen but with visible dimensions so the stream decodes (live preview + recording)
     v.style.cssText = 'position:absolute;left:-9999px;width:320px;height:240px;opacity:0;pointer-events:none;';
     document.body.appendChild(v);
     v.play().catch(() => {});
+    v.addEventListener('loadeddata', () => { v.play().catch(() => {}); });
     return v;
   }
 
@@ -518,8 +548,8 @@ class Compositor {
 
     const isWebcamOnly = this.recordingMode === 'webcam';
     if (!isWebcamOnly) {
-      this.desktopStream = await this._getDesktopStream();
-      if (!this.desktopStream) {
+      this.desktopStream = this.sourceId ? await this._getDesktopStream() : null;
+      if (this.sourceId && !this.desktopStream) {
         throw new Error('Could not get desktop stream. Select a source and try again.');
       }
     } else {
@@ -552,6 +582,7 @@ class Compositor {
         followFocused: this.followFocused,
       });
     }
+    if (this.previewOpen) this._startPreviewPushInterval();
     this.isInitialized = true;
   }
 
@@ -575,7 +606,7 @@ class Compositor {
       if (e.data.size) this.recordingChunks.push(e.data);
     };
     this.mediaRecorder.onstop = () => this._onRecordingStopped();
-    this.mediaRecorder.start(1000);
+    this.mediaRecorder.start(500);
     this.isRecording = true;
     this.onRecordingStarted();
   }
@@ -601,6 +632,11 @@ class Compositor {
 
   async stopRecording() {
     if (!this.mediaRecorder || this.mediaRecorder.state === 'inactive') return;
+    try {
+      if (this.mediaRecorder.state === 'recording' && typeof this.mediaRecorder.requestData === 'function') {
+        this.mediaRecorder.requestData();
+      }
+    } catch (_) {}
     this.mediaRecorder.stop();
   }
 
@@ -642,6 +678,7 @@ class Compositor {
     if (window.screenface && window.screenface.previewStopCapture) {
       window.screenface.previewStopCapture();
     }
+    this._stopPreviewPushInterval();
   }
 
   async _onRecordingStopped() {
@@ -652,11 +689,30 @@ class Compositor {
     this.recordingChunks = [];
     this.onRecordingStopped();
 
-    const arr = await Promise.all(chunks.map((c) => c.arrayBuffer().then((ab) => Array.from(new Uint8Array(ab)))));
-    window.screenface.showSaveDialog().then((filePath) => {
-      if (!filePath) return;
-      window.screenface.writeRecordingChunks(filePath, arr);
-    });
+    if (!chunks.length) {
+      alert('No recording data was captured. Try recording for at least a second.');
+      return;
+    }
+
+    let arr;
+    try {
+      arr = await Promise.all(chunks.map((c) => c.arrayBuffer().then((ab) => Array.from(new Uint8Array(ab)))));
+    } catch (e) {
+      alert('Failed to prepare recording data: ' + (e.message || e));
+      return;
+    }
+
+    const filePath = await window.screenface.showSaveDialog();
+    if (!filePath) return;
+
+    try {
+      const result = await window.screenface.writeRecordingChunks(filePath, arr);
+      if (result && result.success === false && result.error) {
+        alert('Save failed: ' + result.error);
+      }
+    } catch (e) {
+      alert('Save failed: ' + (e.message || e));
+    }
   }
 }
 

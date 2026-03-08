@@ -12,11 +12,17 @@
     "build:win": "electron-builder --win",
     "pack": "electron-builder --dir"
   },
-  "keywords": ["electron", "screen-recorder", "capture", "facecam", "recording"],
+  "keywords": [
+    "electron",
+    "screen-recorder",
+    "capture",
+    "facecam",
+    "recording"
+  ],
   "author": "",
   "license": "MIT",
   "devDependencies": {
-    "electron": "^33.0.0",
+    "electron": "^33.4.11",
     "electron-builder": "^25.1.8"
   },
   "dependencies": {
@@ -28,24 +34,52 @@
   "build": {
     "appId": "com.screenface.app",
     "productName": "ScreenFace",
-    "directories": { "output": "dist" },
-    "files": ["main/**/*", "preload/**/*", "renderer/**/*", "assets/**/*"],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main/**/*",
+      "preload/**/*",
+      "renderer/**/*",
+      "assets/**/*"
+    ],
     "mac": {
       "category": "public.app-category.video",
-      "target": ["dmg", "zip"],
+      "target": [
+        "dmg",
+        "zip"
+      ],
       "hardenedRuntime": true,
       "gatekeeperAssess": false
     },
     "dmg": {
       "title": "ScreenFace ${version}",
       "contents": [
-        { "x": 130, "y": 220 },
-        { "x": 410, "y": 220, "type": "link", "path": "/Applications" }
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
       ],
-      "window": { "width": 540, "height": 380 }
+      "window": {
+        "width": 540,
+        "height": 380
+      }
     },
     "win": {
-      "target": [{ "target": "nsis", "arch": ["x64"] }]
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -58,7 +92,9 @@
       "wizardStyle": "modern"
     },
     "linux": {
-      "target": ["AppImage"],
+      "target": [
+        "AppImage"
+      ],
       "category": "Video"
     }
   }

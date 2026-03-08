@@ -21,8 +21,8 @@ const TRAY_PULSE_MS = 120;
 
 function createMainWindow() {
   mainWindow = new BrowserWindow({
-    width: 480,
-    height: 640,
+    width: 640,
+    height: 920,
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'control.js'),
       contextIsolation: true,
@@ -52,7 +52,12 @@ function createPreviewWindow() {
   previewWindow.setAlwaysOnTop(true, 'screen-saver');
   previewWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
   previewWindow.setContentProtection(true);
-  previewWindow.on('closed', () => { previewWindow = null; });
+  previewWindow.on('closed', () => {
+    previewWindow = null;
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.setBackgroundThrottling(true);
+    }
+  });
 }
 
 function getTrayMenu() {
@@ -193,11 +198,23 @@ ipcMain.on('recording-stopped', () => {
 });
 
 // IPC: preview window
-ipcMain.handle('preview-show', () => { createPreviewWindow(); });
+ipcMain.handle('preview-show', () => {
+  createPreviewWindow();
+  // Keep control window renderer active when in background so popout preview doesn't freeze.
+  // When swiping to another app the popout disappears during the swipe, reappears on top of
+  // the new app but was frozen mid-swipe; disabling background throttling keeps frames
+  // flowing so it resumes updating once the preview window is visible again.
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.setBackgroundThrottling(false);
+  }
+});
 ipcMain.handle('preview-hide', () => {
   if (previewWindow && !previewWindow.isDestroyed()) {
     previewWindow.close();
     previewWindow = null;
+  }
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.setBackgroundThrottling(true);
   }
 });
 ipcMain.handle('preview-set-bounds', (_, bounds) => {
@@ -264,30 +281,42 @@ ipcMain.handle('show-save-dialog', async () => {
   return filePath;
 });
 ipcMain.handle('write-recording-chunks', async (_, filePath, chunks) => {
-  const buffer = Buffer.concat(chunks.map(c => Buffer.from(c)));
-  const isMp4 = filePath && filePath.toLowerCase().endsWith('.mp4');
-  if (isMp4) {
-    const ffmpegPath = require('ffmpeg-static');
-    const ffmpeg = require('fluent-ffmpeg');
-    ffmpeg.setFfmpegPath(ffmpegPath);
-    const tempWebm = path.join(os.tmpdir(), `screenface-${Date.now()}.webm`);
-    await fs.writeFile(tempWebm, buffer);
-    try {
-      await new Promise((resolve, reject) => {
-        ffmpeg(tempWebm)
-          .outputOptions(['-c:v copy', '-an'])
-          .output(filePath)
-          .on('end', resolve)
-          .on('error', reject)
-          .run();
-      });
-    } finally {
-      await fs.unlink(tempWebm).catch(() => {});
+  try {
+    if (!filePath || !chunks || !Array.isArray(chunks)) {
+      return { success: false, error: 'No file path or recording data.' };
     }
-  } else {
-    await fs.writeFile(filePath, buffer);
+    const buffer = Buffer.concat(chunks.map(c => Buffer.from(c)));
+    if (buffer.length === 0) {
+      return { success: false, error: 'Recording produced no data. Record for at least a second and try again.' };
+    }
+    const isMp4 = filePath.toLowerCase().endsWith('.mp4');
+    if (isMp4) {
+      const ffmpegPath = require('ffmpeg-static');
+      const ffmpeg = require('fluent-ffmpeg');
+      ffmpeg.setFfmpegPath(ffmpegPath);
+      const tempWebm = path.join(os.tmpdir(), `screenface-${Date.now()}.webm`);
+      await fs.writeFile(tempWebm, buffer);
+      try {
+        await new Promise((resolve, reject) => {
+          ffmpeg(tempWebm)
+            .outputOptions(['-c:v copy', '-an'])
+            .output(filePath)
+            .on('end', resolve)
+            .on('error', (err) => reject(err))
+            .run();
+        });
+      } finally {
+        await fs.unlink(tempWebm).catch(() => {});
+      }
+    } else {
+      await fs.writeFile(filePath, buffer);
+    }
+    return { success: true };
+  } catch (err) {
+    const message = (err && (err.message || err.toString)) ? (err.message || err.toString()) : 'Unknown error';
+    console.error('write-recording-chunks failed', err);
+    return { success: false, error: message };
   }
-  return true;
 });
 
 // Presets (stored in memory; could persist to disk)
@@ -366,8 +395,12 @@ app.whenReady().then(async () => {
     desktopCapturer.getSources({ types: ['screen', 'window'], thumbnailSize: { width: 0, height: 0 } })
       .then(sources => {
         const src = sources.find(s => s.id === sourceId);
-        if (src) callback({ video: src });
-        else callback({});
+        if (src) {
+          // Pass id and name so Electron creates a valid stream (avoids black frames on macOS)
+          callback({ video: { id: src.id, name: src.name } });
+        } else {
+          callback({});
+        }
       })
       .catch(() => callback({}));
   });
